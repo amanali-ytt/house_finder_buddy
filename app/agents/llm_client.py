@@ -1,47 +1,63 @@
 """
-Free LLM Client - Uses Groq (free tier) or Ollama (local) for testing.
-No OpenAI API key required!
+Free LLM Client using Hugging Face Hub InferenceClient.
+Uses the official huggingface_hub library for inference.
 
-Options:
-1. Groq: Free tier with llama-3.1-70b-versatile (get key at console.groq.com)
-2. Ollama: Completely free, runs locally (install from ollama.ai)
+Free tier: 300 requests/hour (registered), 1/hour (unregistered)
+For better access, get a free token at huggingface.co/settings/tokens
 """
 
 import json
 import os
+import re
 from typing import Optional, Dict, Any, Type
 from pydantic import BaseModel
-import httpx
+from huggingface_hub import InferenceClient
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.config import get_settings
 
-settings = get_settings()
-
-
-class FreeLLMClient:
+class HuggingFaceLLMClient:
     """
-    LLM client that supports free providers:
-    - Groq: Fast inference with free tier (needs GROQ_API_KEY)
-    - Ollama: Local execution (needs Ollama running)
+    Free LLM client using Hugging Face InferenceClient.
+    
+    Free models available:
+    - Qwen/Qwen2.5-Coder-32B-Instruct
+    - meta-llama/Llama-3.2-3B-Instruct
+    - microsoft/Phi-3.5-mini-instruct
     """
+    
+    FREE_MODELS = [
+        "Qwen/Qwen2.5-Coder-32B-Instruct",
+        "meta-llama/Llama-3.2-3B-Instruct",
+        "microsoft/Phi-3.5-mini-instruct",
+    ]
     
     def __init__(self):
-        self.groq_api_key = os.getenv("GROQ_API_KEY", "")
-        self.ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        # HF token is optional but recommended for higher limits
+        self.hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_TOKEN", None))
+        self.model = os.getenv("HF_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
         
-        # Determine which provider to use
-        if self.groq_api_key:
-            self.provider = "groq"
-            self.model = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
-        else:
-            self.provider = "ollama"
-            self.model = os.getenv("OLLAMA_MODEL", "llama3.1")
+        # Initialize client
+        self.client = InferenceClient(token=self.hf_token if self.hf_token else None)
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
+    def _extract_json(self, text: str) -> str:
+        """Extract JSON from response text."""
+        text = text.strip()
+        # Remove markdown code blocks
+        if "```json" in text:
+            match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+            if match:
+                return match.group(1)
+        if "```" in text:
+            match = re.search(r'```\s*(.*?)\s*```', text, re.DOTALL)
+            if match:
+                return match.group(1)
+        # Try to find JSON object
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return match.group(0)
+        return text
+    
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     async def complete(
         self,
         system_prompt: str,
@@ -51,90 +67,38 @@ class FreeLLMClient:
         max_tokens: int = 2000,
         response_format: Optional[Dict] = None,
     ) -> str:
-        """
-        Send a completion request to the free LLM provider.
-        """
+        """Send a completion request to Hugging Face."""
         model = model or self.model
+        json_mode = response_format is not None
         
-        if self.provider == "groq":
-            return await self._groq_complete(
-                system_prompt, user_message, model, temperature, max_tokens, response_format
+        if json_mode:
+            user_message = f"{user_message}\n\nIMPORTANT: Respond with valid JSON only. No markdown, no explanation."
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+        
+        # Use synchronous API (will be wrapped)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        
+        def _sync_call():
+            return self.client.chat_completion(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
             )
-        else:
-            return await self._ollama_complete(
-                system_prompt, user_message, model, temperature, max_tokens, response_format
-            )
-    
-    async def _groq_complete(
-        self,
-        system_prompt: str,
-        user_message: str,
-        model: str,
-        temperature: float,
-        max_tokens: int,
-        response_format: Optional[Dict],
-    ) -> str:
-        """Call Groq API."""
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # Add JSON instruction if needed
-            if response_format:
-                user_message = f"{user_message}\n\nRespond with valid JSON only."
-            
-            response = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.groq_api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-            
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-    
-    async def _ollama_complete(
-        self,
-        system_prompt: str,
-        user_message: str,
-        model: str,
-        temperature: float,
-        max_tokens: int,
-        response_format: Optional[Dict],
-    ) -> str:
-        """Call Ollama local API."""
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            # Add JSON instruction if needed
-            if response_format:
-                user_message = f"{user_message}\n\nRespond with valid JSON only."
-            
-            response = await client.post(
-                f"{self.ollama_base_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_message}
-                    ],
-                    "stream": False,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
-                    }
-                }
-            )
-            
-            response.raise_for_status()
-            data = response.json()
-            return data["message"]["content"]
+        
+        response = await loop.run_in_executor(None, _sync_call)
+        
+        result = response.choices[0].message.content
+        
+        if json_mode:
+            result = self._extract_json(result)
+        
+        return result
     
     async def complete_with_history(
         self,
@@ -144,15 +108,8 @@ class FreeLLMClient:
         temperature: float = 0.7,
         max_tokens: int = 2000,
     ) -> str:
-        """Send a completion request with conversation history."""
-        model = model or self.model
-        
-        # Combine last message for simple implementation
+        """Send request with conversation history."""
         last_message = messages[-1]["content"] if messages else ""
-        
-        # Add JSON instruction
-        last_message = f"{last_message}\n\nRespond with valid JSON only."
-        
         return await self.complete(
             system_prompt=system_prompt,
             user_message=last_message,
@@ -170,7 +127,7 @@ class FreeLLMClient:
         model: Optional[str] = None,
         temperature: float = 0.3,
     ) -> BaseModel:
-        """Get a structured response that validates against a Pydantic model."""
+        """Get structured response validated against Pydantic model."""
         response = await self.complete(
             system_prompt=system_prompt,
             user_message=user_message,
@@ -178,24 +135,19 @@ class FreeLLMClient:
             temperature=temperature,
             response_format={"type": "json_object"}
         )
-        
-        # Extract JSON from response (handle markdown code blocks)
-        response = response.strip()
-        if response.startswith("```"):
-            lines = response.split("\n")
-            response = "\n".join(lines[1:-1])
-        
         data = json.loads(response)
         return response_model(**data)
     
     def get_provider_info(self) -> Dict[str, str]:
-        """Get info about current provider."""
+        """Get provider info."""
         return {
-            "provider": self.provider,
+            "provider": "huggingface",
             "model": self.model,
-            "status": "ready" if (self.groq_api_key or self.provider == "ollama") else "no_key"
+            "status": "ready",
+            "has_token": bool(self.hf_token),
+            "free": True
         }
 
 
 # Singleton instance
-llm_client = FreeLLMClient()
+llm_client = HuggingFaceLLMClient()

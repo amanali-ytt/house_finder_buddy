@@ -1,13 +1,8 @@
 """
-Test script for free LLM integration.
-Tests both PDF extraction AND AI normalization using Groq or Ollama.
+Test script for Hugging Face free LLM integration.
+Tests PDF extraction AND AI normalization - NO API KEY NEEDED!
 
 Usage:
-  # With Groq (set GROQ_API_KEY in environment)
-  set GROQ_API_KEY=your_key_here
-  python tests/test_free_llm.py
-  
-  # With Ollama (run Ollama first: ollama serve)
   python tests/test_free_llm.py
 """
 
@@ -23,32 +18,30 @@ from app.agents.llm_client import llm_client
 
 
 async def test_llm_connection():
-    """Test if LLM provider is working."""
-    print("🔌 Testing LLM Connection...")
+    """Test if Hugging Face API is working."""
+    print("🤗 Testing Hugging Face Connection...")
     print("-" * 50)
     
     info = llm_client.get_provider_info()
     print(f"Provider: {info['provider'].upper()}")
     print(f"Model: {info['model']}")
-    print(f"Status: {info['status']}")
+    print(f"Free: {info['free']}")
     
-    if info['provider'] == 'ollama' and not os.getenv("GROQ_API_KEY"):
-        print("\n⚠️  Using Ollama (local). Make sure Ollama is running!")
-        print("   Start with: ollama serve")
-        print("   Pull model: ollama pull llama3.1")
+    print("\n📡 Sending test request (may take 10-30s on first call)...")
     
-    # Simple test
     try:
         response = await llm_client.complete(
-            system_prompt="You are a helpful assistant.",
-            user_message="Say 'Hello, Property Bot!' in exactly 3 words.",
-            temperature=0.1,
+            system_prompt="You are a helpful assistant. Be concise.",
+            user_message="Say hello in exactly 5 words.",
+            temperature=0.5,
             max_tokens=50
         )
-        print(f"\n✅ LLM Response: {response.strip()}")
+        print(f"✅ Response: {response.strip()}")
         return True
     except Exception as e:
-        print(f"\n❌ LLM Connection Failed: {e}")
+        print(f"❌ Connection Failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -78,49 +71,57 @@ async def test_pdf_with_llm():
     if not properties:
         return
     
-    # Test normalization on first property
-    first_property = properties[0][:2000]  # Limit size
+    # Test normalization on first property (limit text size for free tier)
+    first_property = properties[0][:1500]
     
-    print("\n🤖 Normalizing first property with AI...")
+    print("\n🤖 Normalizing first property with Hugging Face...")
+    print("   (This may take 15-30 seconds on free tier)")
     
     from app.agents.prompts import PROPERTY_NORMALIZER_SYSTEM
     
+    # Simplified prompt for smaller models
+    simple_prompt = """Extract property details and return JSON with these fields:
+- listing_type: "rent" or "sell"
+- property_type: apartment/house/villa/pg/other
+- city: city name
+- locality: area name  
+- price: number (monthly rent or sale price)
+- bedrooms: number
+- nearest_metro: name and distance
+- confidence_score: 0 to 1"""
+    
     try:
         response = await llm_client.complete(
-            system_prompt=PROPERTY_NORMALIZER_SYSTEM,
-            user_message=f"Extract property details from:\n\n{first_property}",
+            system_prompt=simple_prompt,
+            user_message=f"Extract from:\n\n{first_property}",
             temperature=0.3,
-            max_tokens=1500,
+            max_tokens=800,
             response_format={"type": "json_object"}
         )
         
         print("\n✅ AI Normalization Result:")
         print("-" * 50)
         
-        # Try to parse JSON
         import json
         try:
-            # Handle markdown code blocks
-            clean_response = response.strip()
-            if clean_response.startswith("```"):
-                lines = clean_response.split("\n")
-                clean_response = "\n".join(lines[1:-1])
-            
-            data = json.loads(clean_response)
+            data = json.loads(response)
             
             print(f"🏷️  Listing Type: {data.get('listing_type', 'N/A')}")
             print(f"🏠 Property Type: {data.get('property_type', 'N/A')}")
             print(f"📍 City: {data.get('city', 'N/A')}")
             print(f"📍 Locality: {data.get('locality', 'N/A')}")
-            print(f"💰 Price: ₹{data.get('price', 0):,}")
+            price = data.get('price', 0)
+            if isinstance(price, (int, float)):
+                print(f"💰 Price: ₹{price:,}")
+            else:
+                print(f"💰 Price: {price}")
             print(f"🛏️  Bedrooms: {data.get('bedrooms', 'N/A')}")
-            print(f"📊 Confidence: {data.get('confidence_score', 0) * 100:.0f}%")
+            print(f"🚇 Metro: {data.get('nearest_metro', 'N/A')}")
+            print(f"📊 Confidence: {float(data.get('confidence_score', 0)) * 100:.0f}%")
             
-            if data.get('transport'):
-                print(f"🚇 Transport: {data['transport']}")
-                
-        except json.JSONDecodeError:
-            print("Raw response (not JSON):")
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Could not parse as JSON: {e}")
+            print("Raw response:")
             print(response[:500])
             
     except Exception as e:
@@ -135,35 +136,37 @@ async def test_query_planning():
     print("🔍 TESTING QUERY PLANNING")
     print("=" * 50)
     
-    from app.agents.prompts import QUERY_PLANNER_SYSTEM
-    
-    test_query = "2BHK flat for rent in Chennai under 30k near metro"
+    test_query = "2BHK flat for rent in Chennai under 25000"
     
     print(f"Query: \"{test_query}\"")
     print("\n🤖 Converting to structured filters...")
     
+    simple_prompt = """Convert property search query to JSON filters:
+Return JSON with:
+- intent: "buy" or "rent"
+- filters: array of {field, operator, value}
+  - field: city, bedrooms, price, property_type
+  - operator: =, >, <, >=, <=
+- sort_by: field name
+- sort_order: asc or desc"""
+    
     try:
         response = await llm_client.complete(
-            system_prompt=QUERY_PLANNER_SYSTEM,
-            user_message=f"User Query: {test_query}",
+            system_prompt=simple_prompt,
+            user_message=f"Query: {test_query}",
             temperature=0.2,
-            max_tokens=1000,
+            max_tokens=500,
             response_format={"type": "json_object"}
         )
         
         import json
-        clean_response = response.strip()
-        if clean_response.startswith("```"):
-            lines = clean_response.split("\n")
-            clean_response = "\n".join(lines[1:-1])
-        
-        data = json.loads(clean_response)
+        data = json.loads(response)
         
         print("\n✅ Query Plan:")
         print(f"   Intent: {data.get('intent', 'N/A')}")
         print(f"   Filters:")
         for f in data.get('filters', []):
-            print(f"     - {f.get('field')} {f.get('operator')} {f.get('value')}")
+            print(f"     • {f.get('field')} {f.get('operator')} {f.get('value')}")
         print(f"   Sort: {data.get('sort_by', 'N/A')} {data.get('sort_order', 'N/A')}")
         
     except Exception as e:
@@ -172,7 +175,11 @@ async def test_query_planning():
 
 async def main():
     """Run all tests."""
-    print("🧪 Property Bot - Free LLM Testing")
+    print("=" * 50)
+    print("🧪 Property Bot - Hugging Face FREE LLM Test")
+    print("=" * 50)
+    print("Using: Hugging Face InferenceClient (FREE)")
+    print("Model: Qwen/Qwen2.5-Coder-32B-Instruct")
     print("=" * 50)
     
     # Test connection
