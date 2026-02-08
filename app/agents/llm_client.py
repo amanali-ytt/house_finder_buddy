@@ -1,63 +1,215 @@
 """
-Free LLM Client using Hugging Face Hub InferenceClient.
-Uses the official huggingface_hub library for inference.
+Mock LLM Client - Uses rule-based logic to simulate LLM responses.
+No API required! Perfect for testing the complete pipeline.
 
-Free tier: 300 requests/hour (registered), 1/hour (unregistered)
-For better access, get a free token at huggingface.co/settings/tokens
+This simulates what an LLM would return for property normalization
+and query planning based on pattern matching.
 """
 
 import json
-import os
 import re
 from typing import Optional, Dict, Any, Type
 from pydantic import BaseModel
-from huggingface_hub import InferenceClient
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 
-class HuggingFaceLLMClient:
+class MockLLMClient:
     """
-    Free LLM client using Hugging Face InferenceClient.
-    
-    Free models available:
-    - Qwen/Qwen2.5-Coder-32B-Instruct
-    - meta-llama/Llama-3.2-3B-Instruct
-    - microsoft/Phi-3.5-mini-instruct
+    Mock LLM that uses pattern matching to simulate realistic responses.
+    No external API needed - perfect for testing!
     """
-    
-    FREE_MODELS = [
-        "Qwen/Qwen2.5-Coder-32B-Instruct",
-        "meta-llama/Llama-3.2-3B-Instruct",
-        "microsoft/Phi-3.5-mini-instruct",
-    ]
     
     def __init__(self):
-        # HF token is optional but recommended for higher limits
-        self.hf_token = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_TOKEN", None))
-        self.model = os.getenv("HF_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
+        self.model = "mock-llm-v1"
+    
+    def _extract_property_from_text(self, text: str) -> Dict[str, Any]:
+        """Extract property details using regex patterns."""
+        result = {
+            "listing_type": "rent",
+            "property_type": "apartment",
+            "title": "Property Listing",
+            "city": None,
+            "locality": None,
+            "price": None,
+            "bedrooms": None,
+            "nearest_metro": None,
+            "metro_distance": None,
+            "contact": None,
+            "confidence_score": 0.85,
+            "missing_fields": []
+        }
         
-        # Initialize client
-        self.client = InferenceClient(token=self.hf_token if self.hf_token else None)
-    
-    def _extract_json(self, text: str) -> str:
-        """Extract JSON from response text."""
-        text = text.strip()
-        # Remove markdown code blocks
-        if "```json" in text:
-            match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+        text_lower = text.lower()
+        
+        # Detect listing type
+        if "sale" in text_lower or "sell" in text_lower or "buy" in text_lower:
+            result["listing_type"] = "sell"
+        else:
+            result["listing_type"] = "rent"
+        
+        # Extract rent/price - look for patterns like "45k", "25000", "24000 per"
+        rent_patterns = [
+            r'rent[:\s]+(\d+)k',
+            r'rent[:\s]+₹?(\d{4,})',
+            r'(\d+)k[/\s]*month',
+            r'₹(\d{4,})[/\s]*(?:month|per)',
+            r'(\d{4,})\s*(?:per|/)\s*(?:month|person)',
+        ]
+        for pattern in rent_patterns:
+            match = re.search(pattern, text_lower)
             if match:
-                return match.group(1)
-        if "```" in text:
-            match = re.search(r'```\s*(.*?)\s*```', text, re.DOTALL)
+                price = int(match.group(1))
+                if price < 1000:  # It's in 'k' format
+                    price *= 1000
+                result["price"] = price
+                break
+        
+        # Extract city
+        cities = ["chennai", "mumbai", "bangalore", "delhi", "hyderabad", "pune", "kolkata"]
+        for city in cities:
+            if city in text_lower:
+                result["city"] = city.title()
+                break
+        
+        # Extract locality from address patterns
+        locality_patterns = [
+            r'(?:in|at|near)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',
+            r',\s*([A-Za-z]+(?:\s+[A-Za-z]+)?),',
+            r'locality[:\s]+([A-Za-z]+(?:\s+[A-Za-z]+)?)',
+        ]
+        for pattern in locality_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                return match.group(1)
-        # Try to find JSON object
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            return match.group(0)
-        return text
+                locality = match.group(1).strip()
+                if locality.lower() not in cities and len(locality) > 2:
+                    result["locality"] = locality
+                    break
+        
+        # Extract metro station
+        metro_patterns = [
+            r'(?:nearest\s+)?metro(?:\s+station)?[:\s]+([^,\n]+)',
+            r'near\s+([A-Za-z]+)\s+metro',
+        ]
+        for pattern in metro_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                result["nearest_metro"] = match.group(1).strip()[:50]
+                break
+        
+        # Extract metro distance
+        distance_patterns = [
+            r'(?:metro)?(?:\s+station)?\s*distance[:\s]+(\d+\.?\d*)\s*km',
+            r'(\d+\.?\d*)\s*km\s*(?:from\s+)?metro',
+        ]
+        for pattern in distance_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                result["metro_distance"] = float(match.group(1))
+                break
+        
+        # Extract contact
+        contact_match = re.search(r'(?:\+91\s*)?(\d{10})', text)
+        if contact_match:
+            result["contact"] = contact_match.group(1)
+        
+        # Detect property type
+        if "pg" in text_lower or "paying guest" in text_lower:
+            result["property_type"] = "pg"
+        elif "villa" in text_lower:
+            result["property_type"] = "villa"
+        elif "house" in text_lower:
+            result["property_type"] = "house"
+        elif "flat" in text_lower or "apartment" in text_lower:
+            result["property_type"] = "apartment"
+        
+        # Extract bedrooms
+        bhk_match = re.search(r'(\d)\s*bhk', text_lower)
+        if bhk_match:
+            result["bedrooms"] = int(bhk_match.group(1))
+        
+        # Calculate missing fields
+        required = ["city", "price"]
+        for field in required:
+            if not result.get(field):
+                result["missing_fields"].append(field)
+        
+        # Generate title
+        parts = []
+        if result.get("bedrooms"):
+            parts.append(f"{result['bedrooms']}BHK")
+        parts.append(result["property_type"].title())
+        if result.get("listing_type") == "rent":
+            parts.append("for Rent")
+        else:
+            parts.append("for Sale")
+        if result.get("locality"):
+            parts.append(f"in {result['locality']}")
+        result["title"] = " ".join(parts)
+        
+        return result
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    def _parse_search_query(self, query: str) -> Dict[str, Any]:
+        """Parse natural language search query into filters."""
+        result = {
+            "intent": "rent",
+            "filters": [],
+            "sort_by": "price",
+            "sort_order": "asc"
+        }
+        
+        query_lower = query.lower()
+        
+        # Detect intent
+        if "buy" in query_lower or "sale" in query_lower or "sell" in query_lower:
+            result["intent"] = "buy"
+            result["filters"].append({"field": "listing_type", "operator": "=", "value": "sell"})
+        else:
+            result["filters"].append({"field": "listing_type", "operator": "=", "value": "rent"})
+        
+        # Extract city
+        cities = ["chennai", "mumbai", "bangalore", "delhi", "hyderabad", "pune"]
+        for city in cities:
+            if city in query_lower:
+                result["filters"].append({"field": "city", "operator": "=", "value": city.title()})
+                break
+        
+        # Extract BHK
+        bhk_match = re.search(r'(\d)\s*bhk', query_lower)
+        if bhk_match:
+            result["filters"].append({"field": "bedrooms", "operator": "=", "value": int(bhk_match.group(1))})
+        
+        # Extract price constraints
+        under_match = re.search(r'under\s+(\d+)k?', query_lower)
+        if under_match:
+            price = int(under_match.group(1))
+            if price < 1000:
+                price *= 1000
+            result["filters"].append({"field": "price", "operator": "<=", "value": price})
+        
+        below_match = re.search(r'below\s+(\d+)k?', query_lower)
+        if below_match:
+            price = int(below_match.group(1))
+            if price < 1000:
+                price *= 1000
+            result["filters"].append({"field": "price", "operator": "<=", "value": price})
+        
+        # Extract property type
+        if "flat" in query_lower or "apartment" in query_lower:
+            result["filters"].append({"field": "property_type", "operator": "=", "value": "apartment"})
+        elif "pg" in query_lower:
+            result["filters"].append({"field": "property_type", "operator": "=", "value": "pg"})
+        elif "villa" in query_lower:
+            result["filters"].append({"field": "property_type", "operator": "=", "value": "villa"})
+        
+        # Check for amenities
+        if "parking" in query_lower:
+            result["filters"].append({"field": "has_parking", "operator": "=", "value": True})
+        if "gym" in query_lower:
+            result["filters"].append({"field": "has_gym", "operator": "=", "value": True})
+        if "metro" in query_lower:
+            result["filters"].append({"field": "near_metro", "operator": "=", "value": True})
+        
+        return result
+    
     async def complete(
         self,
         system_prompt: str,
@@ -67,38 +219,22 @@ class HuggingFaceLLMClient:
         max_tokens: int = 2000,
         response_format: Optional[Dict] = None,
     ) -> str:
-        """Send a completion request to Hugging Face."""
-        model = model or self.model
-        json_mode = response_format is not None
+        """Simulate LLM completion using rule-based logic."""
         
-        if json_mode:
-            user_message = f"{user_message}\n\nIMPORTANT: Respond with valid JSON only. No markdown, no explanation."
+        # Detect task type from system prompt
+        if "extract" in system_prompt.lower() or "normaliz" in system_prompt.lower():
+            # Property normalization task
+            result = self._extract_property_from_text(user_message)
+            return json.dumps(result, indent=2)
         
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
+        elif "filter" in system_prompt.lower() or "query" in system_prompt.lower():
+            # Query planning task
+            result = self._parse_search_query(user_message)
+            return json.dumps(result, indent=2)
         
-        # Use synchronous API (will be wrapped)
-        import asyncio
-        loop = asyncio.get_event_loop()
-        
-        def _sync_call():
-            return self.client.chat_completion(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        
-        response = await loop.run_in_executor(None, _sync_call)
-        
-        result = response.choices[0].message.content
-        
-        if json_mode:
-            result = self._extract_json(result)
-        
-        return result
+        else:
+            # Generic response
+            return "Hello! I'm a mock LLM for testing purposes."
     
     async def complete_with_history(
         self,
@@ -108,16 +244,9 @@ class HuggingFaceLLMClient:
         temperature: float = 0.7,
         max_tokens: int = 2000,
     ) -> str:
-        """Send request with conversation history."""
+        """Handle conversation history."""
         last_message = messages[-1]["content"] if messages else ""
-        return await self.complete(
-            system_prompt=system_prompt,
-            user_message=last_message,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"}
-        )
+        return await self.complete(system_prompt, last_message)
     
     async def complete_structured(
         self,
@@ -131,8 +260,6 @@ class HuggingFaceLLMClient:
         response = await self.complete(
             system_prompt=system_prompt,
             user_message=user_message,
-            model=model,
-            temperature=temperature,
             response_format={"type": "json_object"}
         )
         data = json.loads(response)
@@ -141,13 +268,13 @@ class HuggingFaceLLMClient:
     def get_provider_info(self) -> Dict[str, str]:
         """Get provider info."""
         return {
-            "provider": "huggingface",
+            "provider": "mock",
             "model": self.model,
             "status": "ready",
-            "has_token": bool(self.hf_token),
-            "free": True
+            "free": True,
+            "no_api_required": True
         }
 
 
 # Singleton instance
-llm_client = HuggingFaceLLMClient()
+llm_client = MockLLMClient()
