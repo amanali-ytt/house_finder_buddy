@@ -19,10 +19,19 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_webhook_url: Optional[str] = None
     
-    # OpenAI
+    # OpenAI (optional now)
     openai_api_key: str = ""
     openai_model_regular: str = "gpt-4o-mini"
     openai_model_advanced: str = "gpt-4o"
+    
+    # Free LLM Providers
+    # Groq: Free tier at console.groq.com
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.1-70b-versatile"
+    
+    # Ollama: Local LLM at ollama.ai
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1"
     
     # Application
     app_env: str = "development"
