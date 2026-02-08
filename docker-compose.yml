@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: property_bot_db
+    environment:
+      POSTGRES_USER: propertybot
+      POSTGRES_PASSWORD: propertybot_secret
+      POSTGRES_DB: property_bot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U propertybot -d property_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: property_bot_api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://propertybot:propertybot_secret@postgres:5432/property_bot
+      DATABASE_SYNC_URL: postgresql://propertybot:propertybot_secret@postgres:5432/property_bot
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      APP_ENV: production
+      DEBUG: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Telegram Bot (separate service)
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.bot
+    container_name: property_bot_telegram
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      API_BASE_URL: http://api:8000/api/v1
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
