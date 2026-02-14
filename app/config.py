@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
     
+    # NVIDIA API
+    nvidia_api_key: str = ""
+    nvidia_model: str = "deepseek-ai/deepseek-v3.2"
+    
     # Application
     app_env: str = "development"
     debug: bool = True

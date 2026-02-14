@@ -19,6 +19,7 @@ pip-delete-this-directory.txt
 .idea/
 *.swp
 *.swo
+.gemini/
 
 # Bot Data
 bot_data.pickle
@@ -32,6 +33,10 @@ logs/
 *.db
 *.sqlite
 
+# Uploaded documents
+documents/
+
 # OS
 .DS_Store
 Thumbs.db
+

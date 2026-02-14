@@ -1,253 +1,209 @@
 """
-Mock LLM Client - Uses rule-based logic to simulate LLM responses.
-No API required! Perfect for testing the complete pipeline.
+NVIDIA LLM Client - Uses OpenAI SDK pointed at NVIDIA's API.
+Supports DeepSeek V3.2 with reasoning/thinking mode.
 
-This simulates what an LLM would return for property normalization
-and query planning based on pattern matching.
+Uses the OpenAI Python library with NVIDIA's base URL:
+https://integrate.api.nvidia.com/v1
 """
 
 import json
-import re
-from typing import Optional, Dict, Any, Type
+import logging
+import asyncio
+from typing import Optional, Dict, Any, Type, List
 from pydantic import BaseModel
+from openai import OpenAI
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
-class MockLLMClient:
+class NvidiaLLMClient:
     """
-    Mock LLM that uses pattern matching to simulate realistic responses.
-    No external API needed - perfect for testing!
+    LLM client using OpenAI SDK with NVIDIA's API endpoint.
+    Supports DeepSeek V3.2 with reasoning/thinking mode and streaming.
     """
-    
+
     def __init__(self):
-        self.model = "mock-llm-v1"
-    
-    def _extract_property_from_text(self, text: str) -> Dict[str, Any]:
-        """Extract property details using regex patterns."""
-        result = {
-            "listing_type": "rent",
-            "property_type": "apartment",
-            "title": "Property Listing",
-            "city": None,
-            "locality": None,
-            "price": None,
-            "bedrooms": None,
-            "nearest_metro": None,
-            "metro_distance": None,
-            "contact": None,
-            "confidence_score": 0.85,
-            "missing_fields": []
-        }
+        self.api_key = settings.nvidia_api_key
+        self.model = settings.nvidia_model
+        self.base_url = "https://integrate.api.nvidia.com/v1"
+
+        if not self.api_key:
+            logger.warning(
+                "⚠️  NVIDIA_API_KEY not set! LLM calls will fail. "
+                "Set it in your .env file."
+            )
+
+        self.client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+        )
+
+    def _is_deepseek(self, model: Optional[str] = None) -> bool:
+        """Check if the model is a DeepSeek model (supports reasoning)."""
+        use_model = model or self.model
+        return "deepseek" in use_model.lower()
+
+    def _call_api(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        stream: bool = True,
+        enable_thinking: bool = False,
+    ) -> str:
+        """
+        Make an API call via the OpenAI SDK.
         
-        text_lower = text.lower()
-        
-        # Detect listing type
-        if "sale" in text_lower or "sell" in text_lower or "buy" in text_lower:
-            result["listing_type"] = "sell"
-        else:
-            result["listing_type"] = "rent"
-        
-        # Extract rent/price - look for patterns like "45k", "25000", "24000 per"
-        rent_patterns = [
-            r'rent[:\s]+(\d+)k',
-            r'rent[:\s]+₹?(\d{4,})',
-            r'(\d+)k[/\s]*month',
-            r'₹(\d{4,})[/\s]*(?:month|per)',
-            r'(\d{4,})\s*(?:per|/)\s*(?:month|person)',
-        ]
-        for pattern in rent_patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                price = int(match.group(1))
-                if price < 1000:  # It's in 'k' format
-                    price *= 1000
-                result["price"] = price
-                break
-        
-        # Extract city
-        cities = ["chennai", "mumbai", "bangalore", "delhi", "hyderabad", "pune", "kolkata"]
-        for city in cities:
-            if city in text_lower:
-                result["city"] = city.title()
-                break
-        
-        # Extract locality from address patterns
-        locality_patterns = [
-            r'(?:in|at|near)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)',
-            r',\s*([A-Za-z]+(?:\s+[A-Za-z]+)?),',
-            r'locality[:\s]+([A-Za-z]+(?:\s+[A-Za-z]+)?)',
-        ]
-        for pattern in locality_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                locality = match.group(1).strip()
-                if locality.lower() not in cities and len(locality) > 2:
-                    result["locality"] = locality
-                    break
-        
-        # Extract metro station
-        metro_patterns = [
-            r'(?:nearest\s+)?metro(?:\s+station)?[:\s]+([^,\n]+)',
-            r'near\s+([A-Za-z]+)\s+metro',
-        ]
-        for pattern in metro_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                result["nearest_metro"] = match.group(1).strip()[:50]
-                break
-        
-        # Extract metro distance
-        distance_patterns = [
-            r'(?:metro)?(?:\s+station)?\s*distance[:\s]+(\d+\.?\d*)\s*km',
-            r'(\d+\.?\d*)\s*km\s*(?:from\s+)?metro',
-        ]
-        for pattern in distance_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                result["metro_distance"] = float(match.group(1))
-                break
-        
-        # Extract contact
-        contact_match = re.search(r'(?:\+91\s*)?(\d{10})', text)
-        if contact_match:
-            result["contact"] = contact_match.group(1)
-        
-        # Detect property type
-        if "pg" in text_lower or "paying guest" in text_lower:
-            result["property_type"] = "pg"
-        elif "villa" in text_lower:
-            result["property_type"] = "villa"
-        elif "house" in text_lower:
-            result["property_type"] = "house"
-        elif "flat" in text_lower or "apartment" in text_lower:
-            result["property_type"] = "apartment"
-        
-        # Extract bedrooms
-        bhk_match = re.search(r'(\d)\s*bhk', text_lower)
-        if bhk_match:
-            result["bedrooms"] = int(bhk_match.group(1))
-        
-        # Calculate missing fields
-        required = ["city", "price"]
-        for field in required:
-            if not result.get(field):
-                result["missing_fields"].append(field)
-        
-        # Generate title
-        parts = []
-        if result.get("bedrooms"):
-            parts.append(f"{result['bedrooms']}BHK")
-        parts.append(result["property_type"].title())
-        if result.get("listing_type") == "rent":
-            parts.append("for Rent")
-        else:
-            parts.append("for Sale")
-        if result.get("locality"):
-            parts.append(f"in {result['locality']}")
-        result["title"] = " ".join(parts)
-        
-        return result
-    
-    def _parse_search_query(self, query: str) -> Dict[str, Any]:
-        """Parse natural language search query into filters."""
-        result = {
-            "intent": "rent",
-            "filters": [],
-            "sort_by": "price",
-            "sort_order": "asc"
-        }
-        
-        query_lower = query.lower()
-        
-        # Detect intent
-        if "buy" in query_lower or "sale" in query_lower or "sell" in query_lower:
-            result["intent"] = "buy"
-            result["filters"].append({"field": "listing_type", "operator": "=", "value": "sell"})
-        else:
-            result["filters"].append({"field": "listing_type", "operator": "=", "value": "rent"})
-        
-        # Extract city
-        cities = ["chennai", "mumbai", "bangalore", "delhi", "hyderabad", "pune"]
-        for city in cities:
-            if city in query_lower:
-                result["filters"].append({"field": "city", "operator": "=", "value": city.title()})
-                break
-        
-        # Extract BHK
-        bhk_match = re.search(r'(\d)\s*bhk', query_lower)
-        if bhk_match:
-            result["filters"].append({"field": "bedrooms", "operator": "=", "value": int(bhk_match.group(1))})
-        
-        # Extract price constraints
-        under_match = re.search(r'under\s+(\d+)k?', query_lower)
-        if under_match:
-            price = int(under_match.group(1))
-            if price < 1000:
-                price *= 1000
-            result["filters"].append({"field": "price", "operator": "<=", "value": price})
-        
-        below_match = re.search(r'below\s+(\d+)k?', query_lower)
-        if below_match:
-            price = int(below_match.group(1))
-            if price < 1000:
-                price *= 1000
-            result["filters"].append({"field": "price", "operator": "<=", "value": price})
-        
-        # Extract property type
-        if "flat" in query_lower or "apartment" in query_lower:
-            result["filters"].append({"field": "property_type", "operator": "=", "value": "apartment"})
-        elif "pg" in query_lower:
-            result["filters"].append({"field": "property_type", "operator": "=", "value": "pg"})
-        elif "villa" in query_lower:
-            result["filters"].append({"field": "property_type", "operator": "=", "value": "villa"})
-        
-        # Check for amenities
-        if "parking" in query_lower:
-            result["filters"].append({"field": "has_parking", "operator": "=", "value": True})
-        if "gym" in query_lower:
-            result["filters"].append({"field": "has_gym", "operator": "=", "value": True})
-        if "metro" in query_lower:
-            result["filters"].append({"field": "near_metro", "operator": "=", "value": True})
-        
-        return result
-    
+        For DeepSeek models, supports reasoning/thinking mode which provides
+        chain-of-thought reasoning before the final answer.
+        """
+        use_model = model or self.model
+        is_deepseek = "deepseek" in use_model.lower()
+
+        logger.info(f"🤖 Calling NVIDIA API (model={use_model}, stream={stream}, thinking={enable_thinking})")
+
+        # Build extra parameters for DeepSeek thinking mode
+        extra_kwargs = {}
+        if is_deepseek and enable_thinking:
+            extra_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"thinking": True}
+            }
+
+        try:
+            if stream:
+                completion = self.client.chat.completions.create(
+                    model=use_model,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=0.95,
+                    max_tokens=max_tokens,
+                    stream=True,
+                    **extra_kwargs,
+                )
+
+                full_content = ""
+                reasoning_content = ""
+
+                for chunk in completion:
+                    if not getattr(chunk, "choices", None):
+                        continue
+
+                    # Capture reasoning (thinking) content separately
+                    reasoning = getattr(chunk.choices[0].delta, "reasoning_content", None)
+                    if reasoning:
+                        reasoning_content += reasoning
+
+                    # Capture actual response content
+                    if chunk.choices and chunk.choices[0].delta.content is not None:
+                        full_content += chunk.choices[0].delta.content
+
+                if reasoning_content:
+                    logger.debug(f"🧠 Reasoning: {reasoning_content[:200]}...")
+
+                return full_content
+            else:
+                completion = self.client.chat.completions.create(
+                    model=use_model,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=0.95,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    **extra_kwargs,
+                )
+
+                if completion.choices:
+                    return completion.choices[0].message.content or ""
+                return ""
+
+        except Exception as e:
+            logger.error(f"❌ NVIDIA API error: {e}")
+            raise
+
     async def complete(
         self,
         system_prompt: str,
         user_message: str,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 4096,
         response_format: Optional[Dict] = None,
+        enable_thinking: bool = False,
     ) -> str:
-        """Simulate LLM completion using rule-based logic."""
-        
-        # Detect task type from system prompt
-        if "extract" in system_prompt.lower() or "normaliz" in system_prompt.lower():
-            # Property normalization task
-            result = self._extract_property_from_text(user_message)
-            return json.dumps(result, indent=2)
-        
-        elif "filter" in system_prompt.lower() or "query" in system_prompt.lower():
-            # Query planning task
-            result = self._parse_search_query(user_message)
-            return json.dumps(result, indent=2)
-        
-        else:
-            # Generic response
-            return "Hello! I'm a mock LLM for testing purposes."
-    
+        """
+        Get a completion from the NVIDIA API.
+
+        Args:
+            system_prompt: System instruction for the model
+            user_message: User's message/query
+            model: Model override (defaults to config)
+            temperature: Sampling temperature
+            max_tokens: Max tokens in response
+            response_format: Optional format spec (e.g. {"type": "json_object"})
+            enable_thinking: Enable DeepSeek reasoning/thinking mode
+
+        Returns:
+            The model's response text (reasoning is logged but not returned)
+        """
+        # If JSON output is requested, reinforce it in the system prompt
+        sys_content = system_prompt
+        if response_format and response_format.get("type") == "json_object":
+            sys_content += "\n\nYou MUST respond with valid JSON only. No markdown code fences, no explanation, just the raw JSON object."
+
+        messages = [
+            {"role": "system", "content": sys_content},
+            {"role": "user", "content": user_message},
+        ]
+
+        return await asyncio.to_thread(
+            self._call_api,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            enable_thinking=enable_thinking,
+        )
+
     async def complete_with_history(
         self,
         system_prompt: str,
         messages: list,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 4096,
+        enable_thinking: bool = False,
     ) -> str:
-        """Handle conversation history."""
-        last_message = messages[-1]["content"] if messages else ""
-        return await self.complete(system_prompt, last_message)
-    
+        """
+        Get completion with conversation history.
+
+        Args:
+            system_prompt: System instruction
+            messages: List of {"role": ..., "content": ...} dicts
+            model: Model override
+            temperature: Sampling temperature
+            max_tokens: Max tokens
+            enable_thinking: Enable DeepSeek reasoning/thinking mode
+
+        Returns:
+            The model's response text
+        """
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+        return await asyncio.to_thread(
+            self._call_api,
+            messages=full_messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            enable_thinking=enable_thinking,
+        )
+
     async def complete_structured(
         self,
         system_prompt: str,
@@ -256,25 +212,51 @@ class MockLLMClient:
         model: Optional[str] = None,
         temperature: float = 0.3,
     ) -> BaseModel:
-        """Get structured response validated against Pydantic model."""
+        """
+        Get structured response validated against a Pydantic model.
+
+        Args:
+            system_prompt: System instruction
+            user_message: User's message
+            response_model: Pydantic model class for validation
+            model: Model override
+            temperature: Sampling temperature
+
+        Returns:
+            Validated Pydantic model instance
+        """
         response = await self.complete(
             system_prompt=system_prompt,
             user_message=user_message,
-            response_format={"type": "json_object"}
+            model=model,
+            temperature=temperature,
+            response_format={"type": "json_object"},
         )
-        data = json.loads(response)
+
+        # Clean up response — strip markdown fences if present
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            json_lines = []
+            for line in lines[1:]:
+                if line.strip() == "```":
+                    break
+                json_lines.append(line)
+            text = "\n".join(json_lines)
+
+        data = json.loads(text)
         return response_model(**data)
-    
+
     def get_provider_info(self) -> Dict[str, str]:
-        """Get provider info."""
+        """Get provider information."""
         return {
-            "provider": "mock",
+            "provider": "nvidia",
             "model": self.model,
-            "status": "ready",
-            "free": True,
-            "no_api_required": True
+            "status": "ready" if self.api_key else "no_api_key",
+            "api_url": self.base_url,
+            "thinking_support": str(self._is_deepseek()),
         }
 
 
 # Singleton instance
-llm_client = MockLLMClient()
+llm_client = NvidiaLLMClient()
