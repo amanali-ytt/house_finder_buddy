@@ -160,6 +160,28 @@ PROPERTY_NORMALIZER_SYSTEM = """You are a property data extraction and normaliza
 - "Studio" or "1RK" → bedrooms = 1
 - Multiple properties? Return an array of normalized objects.
 
+## CRITICAL City Extraction Rules:
+- ALWAYS extract **city** from the address, location, or pincode
+- If the address contains "Chennai, Tamil Nadu" → city = "Chennai"
+- If the address contains "Mumbai, Maharashtra" → city = "Mumbai"
+- If a pincode starts with 600xxx → city = "Chennai"
+- If a pincode starts with 400xxx → city = "Mumbai"
+- NEVER leave city empty if there is ANY location hint in the text
+
+## Property Type Classification:
+- "PG", "Paying Guest", "Hostel", "PG accommodation" → property_type = "pg"
+- "Independent house", "house for rent", "individual house", "home" → property_type = "house"
+- Do NOT use "other" if the property clearly fits apartment, house, pg, or villa
+- Rooms in a shared building with monthly rent → "pg"
+- Standalone residential building → "house"
+
+## Bedrooms Rules:
+- "2BHK" or "2 BHK" → bedrooms = 2
+- "3BHK" → bedrooms = 3
+- "1RK" or "Studio" → bedrooms = 1
+- PG accommodation → bedrooms = 1 (single room)
+- If no BHK info but property is a house, try to infer from description
+
 ## Important:
 - If you cannot determine listing_type, default to "sell" but lower confidence
 - Always provide confidence_score between 0 and 1
@@ -175,33 +197,51 @@ QUERY_PLANNER_SYSTEM = """You are a query planning agent for a property search s
 
 ## Critical Rules:
 1. You output ONLY structured JSON - NEVER SQL
-2. Only use fields from the allowed whitelist
-3. Detect user INTENT: are they looking to BUY or RENT?
-4. Extract filters with proper operators
+2. Only use fields from the allowed whitelist below
+3. Only use the EXACT allowed enum values listed below - never variations
+4. Detect user INTENT: are they looking to BUY or RENT?
+5. Do NOT add a price filter for words like "cheapest" or "affordable" - use sort_by price instead
+6. Do NOT include listing_type in filters - it is controlled by the intent field
 
 ## User Intent Detection:
-- "I want to rent", "looking for rental", "need on rent", "monthly" → intent: "rent"
-- "I want to buy", "purchase", "invest", "for sale" → intent: "buy"
-- If unclear, ask for clarification or default to "rent"
+- "rent", "rental", "monthly", "per month", "PG" → intent: "rent"
+- "buy", "purchase", "invest", "for sale" → intent: "buy"
+- If unclear, default to intent: "search" (no listing_type filter)
 
-## Allowed Fields (Whitelist):
-| Field | Type | Operators |
-|-------|------|-----------|
-| listing_type | enum | =, in |
-| property_type | enum | =, in |
-| price | numeric | =, >, <, >=, <= |
-| city | string | =, like |
-| locality | string | =, like |
-| bedrooms | integer | =, >, <, >=, <= |
-| bathrooms | integer | =, >= |
-| carpet_area | numeric | >=, <= |
-| furnishing | enum | =, in |
-| floor_number | integer | =, >=, <= |
-| pets_allowed | boolean | = |
-| has_parking | boolean | = |
-| has_lift | boolean | = |
-| has_gym | boolean | = |
-| has_swimming_pool | boolean | = |
+## Allowed Fields and EXACT Values:
+
+| Field | Type | Operators | ALLOWED VALUES |
+|-------|------|-----------|----------------|
+| property_type | enum | =, in | "apartment", "house", "villa", "plot", "commercial", "pg", "other" |
+| price | numeric | >, <, >=, <= | any number |
+| city | string | =, like | any city name |
+| locality | string | =, like | any locality |
+| bedrooms | integer | =, >, <, >=, <= | any integer |
+| bathrooms | integer | =, >= | any integer |
+| carpet_area | numeric | >=, <= | any number (sq ft) |
+| furnishing | enum | =, in | "unfurnished", "semi-furnished", "fully-furnished" |
+| floor_number | integer | =, >=, <= | any integer |
+| pets_allowed | boolean | = | true, false |
+| has_parking | boolean | = | true, false |
+| has_lift | boolean | = | true, false |
+| has_gym | boolean | = | true, false |
+| has_swimming_pool | boolean | = | true, false |
+| has_ac | boolean | = | true, false |
+| has_wifi | boolean | = | true, false |
+| near_metro | boolean | = | true, false |
+
+## STRICT VALUE RULES:
+- listing_type: NEVER put in filters. Use the "intent" field instead.
+- property_type: MUST be exactly one of: apartment, house, villa, plot, commercial, pg, other
+  - "flat" → "apartment"
+  - "PG", "paying guest", "hostel" → "pg"
+  - "independent house" → "house"
+- furnishing: MUST be exactly: "unfurnished", "semi-furnished", or "fully-furnished"
+  - "furnished" → "fully-furnished"
+  - "semi furnished" → "semi-furnished"
+- city: Use title case ("Chennai", "Mumbai", "Bangalore")
+- "near metro" → add filter: {"field": "near_metro", "operator": "=", "value": true}
+- "cheapest", "affordable", "budget" → do NOT add price=0 filter, just set sort_by: "price", sort_order: "asc"
 
 ## Output Format:
 ```json
@@ -222,7 +262,6 @@ QUERY_PLANNER_SYSTEM = """You are a query planning agent for a property search s
 
 ### Example 1
 User: "2BHK flat for rent in Bangalore under 30k"
-Output:
 ```json
 {
   "intent": "rent",
@@ -239,18 +278,15 @@ Output:
 ```
 
 ### Example 2
-User: "Looking to buy a 3BHK villa in Pune between 1-2 crore with parking"
-Output:
+User: "PG near metro in Chennai under 15000"
 ```json
 {
-  "intent": "buy",
+  "intent": "rent",
   "filters": [
-    {"field": "city", "operator": "=", "value": "Pune"},
-    {"field": "bedrooms", "operator": "=", "value": 3},
-    {"field": "property_type", "operator": "=", "value": "villa"},
-    {"field": "price", "operator": ">=", "value": 10000000},
-    {"field": "price", "operator": "<=", "value": 20000000},
-    {"field": "has_parking", "operator": "=", "value": true}
+    {"field": "city", "operator": "=", "value": "Chennai"},
+    {"field": "property_type", "operator": "=", "value": "pg"},
+    {"field": "near_metro", "operator": "=", "value": true},
+    {"field": "price", "operator": "<=", "value": 15000}
   ],
   "sort_by": "price",
   "sort_order": "asc",
@@ -259,14 +295,28 @@ Output:
 ```
 
 ### Example 3
-User: "Affordable flats near metro in Andheri"
-Output:
+User: "Cheapest furnished apartment in Mumbai"
 ```json
 {
   "intent": "search",
   "filters": [
-    {"field": "locality", "operator": "like", "value": "Andheri"},
+    {"field": "city", "operator": "=", "value": "Mumbai"},
+    {"field": "furnishing", "operator": "=", "value": "fully-furnished"},
     {"field": "property_type", "operator": "=", "value": "apartment"}
+  ],
+  "sort_by": "price",
+  "sort_order": "asc",
+  "limit": 20
+}
+```
+
+### Example 4
+User: "Show me all rental properties in Chennai"
+```json
+{
+  "intent": "rent",
+  "filters": [
+    {"field": "city", "operator": "=", "value": "Chennai"}
   ],
   "sort_by": "price",
   "sort_order": "asc",
@@ -280,13 +330,12 @@ Output:
 - "1Cr", "1 crore" → 10000000
 - "under 50L" → price <= 5000000
 - "above 1Cr" → price >= 10000000
-- "between 50L to 1Cr" → price >= 5000000 AND price <= 10000000
 
 ## Important:
-- If user query is ambiguous, include fewer filters (be conservative)
+- Be CONSERVATIVE: if unsure, use fewer filters
 - Never include raw user text in values - normalize everything
-- City names should be normalized (Bengaluru → Bangalore is OK)
-- Locality can use "like" operator for partial matches
+- DO NOT add listing_type to filters - use intent field
+- For "cheapest"/"affordable": just sort by price asc, no price filter
 """
 
 # =============================================================================

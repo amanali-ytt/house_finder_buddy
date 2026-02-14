@@ -1,110 +1,209 @@
 """
-Base LLM client for interacting with OpenAI GPT models.
-All agents use this client to ensure consistent behavior.
+NVIDIA LLM Client - Uses OpenAI SDK pointed at NVIDIA's API.
+Supports DeepSeek V3.2 with reasoning/thinking mode.
+
+Uses the OpenAI Python library with NVIDIA's base URL:
+https://integrate.api.nvidia.com/v1
 """
 
 import json
-from typing import Optional, Dict, Any, Type
-from openai import AsyncOpenAI
+import logging
+import asyncio
+from typing import Optional, Dict, Any, Type, List
 from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import OpenAI
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-class LLMClient:
-    """Async OpenAI client wrapper with retry logic."""
-    
+class NvidiaLLMClient:
+    """
+    LLM client using OpenAI SDK with NVIDIA's API endpoint.
+    Supports DeepSeek V3.2 with reasoning/thinking mode and streaming.
+    """
+
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=settings.openai_api_key)
-    
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
+        self.api_key = settings.nvidia_api_key
+        self.model = settings.nvidia_model
+        self.base_url = "https://integrate.api.nvidia.com/v1"
+
+        if not self.api_key:
+            logger.warning(
+                "⚠️  NVIDIA_API_KEY not set! LLM calls will fail. "
+                "Set it in your .env file."
+            )
+
+        self.client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+        )
+
+    def _is_deepseek(self, model: Optional[str] = None) -> bool:
+        """Check if the model is a DeepSeek model (supports reasoning)."""
+        use_model = model or self.model
+        return "deepseek" in use_model.lower()
+
+    def _call_api(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        stream: bool = True,
+        enable_thinking: bool = False,
+    ) -> str:
+        """
+        Make an API call via the OpenAI SDK.
+        
+        For DeepSeek models, supports reasoning/thinking mode which provides
+        chain-of-thought reasoning before the final answer.
+        """
+        use_model = model or self.model
+        is_deepseek = "deepseek" in use_model.lower()
+
+        logger.info(f"🤖 Calling NVIDIA API (model={use_model}, stream={stream}, thinking={enable_thinking})")
+
+        # Build extra parameters for DeepSeek thinking mode
+        extra_kwargs = {}
+        if is_deepseek and enable_thinking:
+            extra_kwargs["extra_body"] = {
+                "chat_template_kwargs": {"thinking": True}
+            }
+
+        try:
+            if stream:
+                completion = self.client.chat.completions.create(
+                    model=use_model,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=0.95,
+                    max_tokens=max_tokens,
+                    stream=True,
+                    **extra_kwargs,
+                )
+
+                full_content = ""
+                reasoning_content = ""
+
+                for chunk in completion:
+                    if not getattr(chunk, "choices", None):
+                        continue
+
+                    # Capture reasoning (thinking) content separately
+                    reasoning = getattr(chunk.choices[0].delta, "reasoning_content", None)
+                    if reasoning:
+                        reasoning_content += reasoning
+
+                    # Capture actual response content
+                    if chunk.choices and chunk.choices[0].delta.content is not None:
+                        full_content += chunk.choices[0].delta.content
+
+                if reasoning_content:
+                    logger.debug(f"🧠 Reasoning: {reasoning_content[:200]}...")
+
+                return full_content
+            else:
+                completion = self.client.chat.completions.create(
+                    model=use_model,
+                    messages=messages,
+                    temperature=temperature,
+                    top_p=0.95,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    **extra_kwargs,
+                )
+
+                if completion.choices:
+                    return completion.choices[0].message.content or ""
+                return ""
+
+        except Exception as e:
+            logger.error(f"❌ NVIDIA API error: {e}")
+            raise
+
     async def complete(
         self,
         system_prompt: str,
         user_message: str,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 4096,
         response_format: Optional[Dict] = None,
+        enable_thinking: bool = False,
     ) -> str:
         """
-        Send a completion request to OpenAI.
-        
+        Get a completion from the NVIDIA API.
+
         Args:
-            system_prompt: System instructions for the model
-            user_message: User's input message
-            model: Model to use (defaults to gpt-4o-mini)
-            temperature: Creativity level (0-1)
-            max_tokens: Maximum response length
-            response_format: Optional JSON schema for structured output
-            
+            system_prompt: System instruction for the model
+            user_message: User's message/query
+            model: Model override (defaults to config)
+            temperature: Sampling temperature
+            max_tokens: Max tokens in response
+            response_format: Optional format spec (e.g. {"type": "json_object"})
+            enable_thinking: Enable DeepSeek reasoning/thinking mode
+
         Returns:
-            Model's response as string
+            The model's response text (reasoning is logged but not returned)
         """
-        model = model or settings.openai_model_regular
-        
+        # If JSON output is requested, reinforce it in the system prompt
+        sys_content = system_prompt
+        if response_format and response_format.get("type") == "json_object":
+            sys_content += "\n\nYou MUST respond with valid JSON only. No markdown code fences, no explanation, just the raw JSON object."
+
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
+            {"role": "system", "content": sys_content},
+            {"role": "user", "content": user_message},
         ]
-        
-        kwargs = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        
-        # Add JSON mode if specified
-        if response_format:
-            kwargs["response_format"] = {"type": "json_object"}
-        
-        response = await self.client.chat.completions.create(**kwargs)
-        
-        return response.choices[0].message.content
-    
+
+        return await asyncio.to_thread(
+            self._call_api,
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            enable_thinking=enable_thinking,
+        )
+
     async def complete_with_history(
         self,
         system_prompt: str,
         messages: list,
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 4096,
+        enable_thinking: bool = False,
     ) -> str:
         """
-        Send a completion request with conversation history.
-        
+        Get completion with conversation history.
+
         Args:
-            system_prompt: System instructions
-            messages: List of {"role": "user/assistant", "content": "..."}
-            model: Model to use
-            temperature: Creativity level
-            max_tokens: Maximum response length
-            
+            system_prompt: System instruction
+            messages: List of {"role": ..., "content": ...} dicts
+            model: Model override
+            temperature: Sampling temperature
+            max_tokens: Max tokens
+            enable_thinking: Enable DeepSeek reasoning/thinking mode
+
         Returns:
-            Model's response as string
+            The model's response text
         """
-        model = model or settings.openai_model_regular
-        
-        full_messages = [{"role": "system", "content": system_prompt}]
-        full_messages.extend(messages)
-        
-        response = await self.client.chat.completions.create(
-            model=model,
+        full_messages = [{"role": "system", "content": system_prompt}] + messages
+
+        return await asyncio.to_thread(
+            self._call_api,
             messages=full_messages,
+            model=model,
             temperature=temperature,
             max_tokens=max_tokens,
-            response_format={"type": "json_object"}
+            stream=True,
+            enable_thinking=enable_thinking,
         )
-        
-        return response.choices[0].message.content
-    
+
     async def complete_structured(
         self,
         system_prompt: str,
@@ -114,15 +213,15 @@ class LLMClient:
         temperature: float = 0.3,
     ) -> BaseModel:
         """
-        Get a structured response that validates against a Pydantic model.
-        
+        Get structured response validated against a Pydantic model.
+
         Args:
-            system_prompt: System instructions
-            user_message: User's input
+            system_prompt: System instruction
+            user_message: User's message
             response_model: Pydantic model class for validation
-            model: Model to use
-            temperature: Creativity (lower for structured)
-            
+            model: Model override
+            temperature: Sampling temperature
+
         Returns:
             Validated Pydantic model instance
         """
@@ -131,13 +230,33 @@ class LLMClient:
             user_message=user_message,
             model=model,
             temperature=temperature,
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
         )
-        
-        # Parse and validate
-        data = json.loads(response)
+
+        # Clean up response — strip markdown fences if present
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            json_lines = []
+            for line in lines[1:]:
+                if line.strip() == "```":
+                    break
+                json_lines.append(line)
+            text = "\n".join(json_lines)
+
+        data = json.loads(text)
         return response_model(**data)
+
+    def get_provider_info(self) -> Dict[str, str]:
+        """Get provider information."""
+        return {
+            "provider": "nvidia",
+            "model": self.model,
+            "status": "ready" if self.api_key else "no_api_key",
+            "api_url": self.base_url,
+            "thinking_support": str(self._is_deepseek()),
+        }
 
 
 # Singleton instance
-llm_client = LLMClient()
+llm_client = NvidiaLLMClient()

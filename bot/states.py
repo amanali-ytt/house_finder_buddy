@@ -11,13 +11,19 @@ class ConversationState(Enum):
     # Initial states
     IDLE = auto()
     
-    # Adding property flow
+    # Onboarding flow (new users)
+    ONBOARDING_WAITING_DOC = auto()
+    ONBOARDING_CONFIRMING = auto()
+    
+    # Adding property flow (chat)
     ADDING_PROPERTY = auto()
     WAITING_LISTING_TYPE = auto()
     WAITING_PROPERTY_TYPE = auto()
     WAITING_PRICE = auto()
     WAITING_CITY = auto()
     WAITING_BEDROOMS = auto()
+    WAITING_CONTACT = auto()
+    WAITING_MAPS_URL = auto()
     WAITING_DETAILS = auto()
     CONFIRMING_PROPERTY = auto()
     
@@ -80,12 +86,22 @@ def get_confirmation_keyboard():
     )
 
 
+def get_confirm_all_keyboard():
+    """Keyboard for confirming multiple properties."""
+    return ReplyKeyboardMarkup(
+        [["✅ Save All", "📝 Review Each", "❌ Cancel"]],
+        one_time_keyboard=True,
+        resize_keyboard=True
+    )
+
+
 def get_main_menu_keyboard():
     """Main menu keyboard."""
     return ReplyKeyboardMarkup(
         [
-            ["➕ Add Property", "🔍 Search"],
-            ["📋 My Properties", "ℹ️ Help"]
+            ["➕ Add Property", "📄 Upload File"],
+            ["🔍 Search", "📋 My Properties"],
+            ["ℹ️ Help"]
         ],
         resize_keyboard=True
     )
@@ -112,6 +128,11 @@ def format_property_summary(property_data: dict) -> str:
         lines.append(f"📐 Area: {property_data['carpet_area']} sq ft")
     
     price = property_data.get("price", 0)
+    try:
+        price = float(price)
+    except (ValueError, TypeError):
+        price = 0
+    
     if property_data.get("listing_type") == "rent":
         lines.append(f"💰 Rent: ₹{price:,.0f}/month")
     else:
@@ -125,4 +146,64 @@ def format_property_summary(property_data: dict) -> str:
     if property_data.get("furnishing"):
         lines.append(f"🪑 Furnishing: {property_data['furnishing'].replace('-', ' ').title()}")
     
+    # Contact phone
+    phone = property_data.get("contact_phone", "")
+    if phone:
+        lines.append(f"📞 Contact: {phone}")
+    
+    # Google Maps
+    maps_url = property_data.get("google_maps_url", "")
+    if maps_url:
+        lines.append(f"🗺️ [View on Maps]({maps_url})")
+    
+    # Features
+    features = property_data.get("features", {})
+    if isinstance(features, dict):
+        feat_list = [k.replace("has_", "").replace("_", " ").title() 
+                     for k, v in features.items() if v]
+        if feat_list:
+            lines.append(f"✨ Features: {', '.join(feat_list)}")
+    
     return "\n".join(lines)
+
+
+def format_property_card(prop: dict, index: int = 1) -> str:
+    """Format a property from the database for display."""
+    listing = "🔑 Rent" if prop.get("listing_type") == "rent" else "🏠 Sale"
+    price = float(prop.get("price", 0))
+    
+    if prop.get("listing_type") == "rent":
+        price_str = f"₹{price:,.0f}/mo"
+    elif price >= 10000000:
+        price_str = f"₹{price/10000000:.1f}Cr"
+    elif price >= 100000:
+        price_str = f"₹{price/100000:.0f}L"
+    else:
+        price_str = f"₹{price:,.0f}"
+    
+    bedrooms = prop.get("bedrooms", "?")
+    ptype = prop.get("property_type", "property").title()
+    loc = prop.get("locality", "")
+    city = prop.get("city", "")
+    title = prop.get("title", "Property")
+    
+    card = (
+        f"{index}. {listing} | {bedrooms}BHK {ptype}\n"
+        f"   📍 {loc}, {city}\n"
+        f"   💰 {price_str}"
+    )
+    
+    if prop.get("furnishing"):
+        card += f"\n   🪑 {prop['furnishing'].replace('-', ' ').title()}"
+    
+    # Contact phone
+    phone = prop.get("contact_phone", "")
+    if phone:
+        card += f"\n   📞 {phone}"
+    
+    # Google Maps
+    maps_url = prop.get("google_maps_url", "")
+    if maps_url:
+        card += f"\n   🗺️ [View on Maps]({maps_url})"
+    
+    return card

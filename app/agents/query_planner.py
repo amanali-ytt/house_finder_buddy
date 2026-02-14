@@ -68,10 +68,53 @@ Convert this search query into structured filters. Return a valid JSON object wi
                 limit=20
             )
     
+    def _normalize_filter_value(self, field: str, value, operator: str):
+        """Normalize LLM-generated filter values to match exact DB enum values."""
+        
+        # --- property_type normalization ---
+        if field == "property_type" and isinstance(value, str):
+            pt_map = {
+                "flat": "apartment", "flats": "apartment",
+                "apt": "apartment", "condo": "apartment",
+                "independent house": "house", "bungalow": "house",
+                "paying guest": "pg", "hostel": "pg",
+            }
+            value = pt_map.get(value.lower(), value.lower())
+        
+        # --- furnishing normalization ---
+        if field == "furnishing" and isinstance(value, str):
+            furn_map = {
+                "furnished": "fully-furnished",
+                "fully furnished": "fully-furnished",
+                "full": "fully-furnished",
+                "semi": "semi-furnished",
+                "semi furnished": "semi-furnished",
+                "unfurnished": "unfurnished",
+                "none": "unfurnished",
+            }
+            value = furn_map.get(value.lower(), value.lower())
+        
+        # --- listing_type normalization (if it still slips through) ---
+        if field == "listing_type" and isinstance(value, str):
+            lt_map = {
+                "rental": "rent", "renting": "rent",
+                "selling": "sell", "sale": "sell", "buy": "sell",
+            }
+            value = lt_map.get(value.lower(), value.lower())
+        
+        # --- city normalization ---
+        if field == "city" and isinstance(value, str):
+            value = value.strip().title()
+        
+        return value
+
     def _validate_and_convert(self, data: dict) -> QueryPlannerOutput:
         """Validate and convert raw LLM output to typed output."""
         # Validate intent
         intent = data.get("intent", "search").lower()
+        # Normalize intent variations
+        intent_map = {"rental": "rent", "renting": "rent", "purchase": "buy", "buying": "buy"}
+        intent = intent_map.get(intent, intent)
         if intent not in ["buy", "rent", "search"]:
             intent = "search"
         
@@ -91,6 +134,14 @@ Convert this search query into structured filters. Return a valid JSON object wi
             if not field or value is None:
                 continue
             
+            # Skip listing_type filters (handled by intent)
+            if field == "listing_type":
+                continue
+            
+            # Skip price=0 filters (LLM artifact for "cheapest")
+            if field == "price" and op == "=" and (value == 0 or value == "0"):
+                continue
+            
             # Normalize operator
             op_map = {
                 "=": QueryFilterOperator.EQ,
@@ -106,6 +157,9 @@ Convert this search query into structured filters. Return a valid JSON object wi
             }
             
             operator = op_map.get(op.lower(), QueryFilterOperator.EQ)
+            
+            # Normalize filter value
+            value = self._normalize_filter_value(field, value, op)
             
             filters.append(QueryFilter(
                 field=field,
