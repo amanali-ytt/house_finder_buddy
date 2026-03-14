@@ -59,7 +59,7 @@ class ConversationAgent:
         response = await llm_client.complete_with_history(
             system_prompt=self.system_prompt,
             messages=messages,
-            model=settings.openai_model_regular,
+            model=settings.regular_llm_model,
             temperature=0.7,
         )
         

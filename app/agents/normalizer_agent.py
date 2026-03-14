@@ -51,11 +51,11 @@ Raw Property Text:
 
 Extract and normalize all property information from the above text. Return a valid JSON object."""
 
-        # Use GPT-4O for complex normalization
+        # Use the configured advanced model for complex normalization.
         response = await llm_client.complete(
             system_prompt=self.system_prompt,
             user_message=user_message,
-            model=settings.openai_model_advanced,  # GPT-4O for accuracy
+            model=settings.advanced_llm_model,
             temperature=0.3,  # Lower for structured output
             response_format={"type": "json_object"}
         )

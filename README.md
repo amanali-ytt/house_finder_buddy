@@ -1,219 +1,205 @@
-# 🏠 AI Property Management Telegram Bot
+# House Finder Buddy
 
-An AI-powered Telegram bot for property management and discovery. Users can add properties via chat, PDF, or Excel and query them using natural language.
+House Finder Buddy is a Telegram-first property listing and search app backed by FastAPI, PostgreSQL, and an LLM-powered parsing/query layer.
 
-## 🏗️ Architecture
+Users can:
+- onboard by uploading a property document
+- add listings through chat or file upload
+- search listings in natural language
+- view their own saved properties
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Telegram Bot   │ ──▶ │   FastAPI API   │ ──▶ │   PostgreSQL    │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-         │                      │
-         │                      ▼
-         │              ┌─────────────────┐
-         │              │   AI Agents     │
-         │              │                 │
-         │              │ • Conversation  │
-         │              │ • Normalizer    │
-         │              │ • Query Planner │
-         └──────────────└─────────────────┘
-```
+## Stack
 
-### Security Model
-- **LLM outputs JSON only** - never raw SQL
-- **Secure Query Builder** validates all filters against whitelist
-- All database queries are parameterized
-- Role-based access control
+- Telegram bot: `python-telegram-bot`
+- API: FastAPI
+- Database: PostgreSQL
+- ORM: SQLAlchemy async
+- LLM provider: NVIDIA hosted API on [build.nvidia.com](https://build.nvidia.com/)
 
-## 📁 Project Structure
+## Project Layout
 
-```
-├── app/                    # FastAPI Backend
-│   ├── agents/             # AI Agents
-│   │   ├── prompts.py      # System prompts
-│   │   ├── conversation_agent.py
-│   │   ├── normalizer_agent.py
-│   │   └── query_planner.py
-│   ├── routers/            # API Routes
-│   │   ├── properties.py   # CRUD endpoints
-│   │   └── query.py        # Natural language search
-│   ├── services/
-│   │   ├── query_builder.py  # Secure SQL builder
-│   │   └── file_processor.py # PDF/Excel parser
-│   ├── config.py
-│   ├── database.py
-│   ├── models.py           # SQLAlchemy models
-│   ├── schemas.py          # Pydantic schemas
-│   └── main.py             # FastAPI app
-├── bot/                    # Telegram Bot
-│   ├── handlers.py         # Message handlers
-│   ├── states.py           # Conversation states
-│   └── main.py             # Bot entry point
-├── database/
-│   └── schema.sql          # PostgreSQL schema
-├── docker-compose.yml
-├── requirements.txt
-└── .env.example
+```text
+app/        FastAPI app, models, routers, agents, services
+bot/        Telegram bot handlers, persistence, DB adapter
+database/   SQL schema reference
+tests/      Regression tests and optional live-provider tests
 ```
 
-## 🚀 Quick Start
+## Recommended Provider Setup
+
+This repo is configured to work best with an NVIDIA API key.
+
+Recommended default model:
+- `deepseek-ai/deepseek-v3.2`
+
+You only need:
+- `TELEGRAM_BOT_TOKEN`
+- `NVIDIA_API_KEY`
+- PostgreSQL running locally or remotely
+
+## Quick Start
 
 ### 1. Prerequisites
+
 - Python 3.11+
 - PostgreSQL 15+
-- OpenAI API key
-- Telegram Bot Token (from @BotFather)
+- Telegram bot token from BotFather
+- NVIDIA API key from [build.nvidia.com](https://build.nvidia.com/)
 
-### 2. Setup
+### 2. Clone and configure
 
 ```bash
-# Clone and enter directory
-cd "Telegram project"
+git clone https://github.com/amanali-ytt/house_finder_buddy.git
+cd house_finder_buddy
+```
 
-# Create virtual environment
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+Create a virtual environment and install dependencies:
 
-# Install dependencies
+```bash
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
+```
 
-# Copy environment file
+Create your env file:
+
+```bash
 copy .env.example .env
-# Edit .env with your keys
 ```
 
-### 3. Database Setup
-
-```bash
-# With Docker
-docker-compose up -d postgres
-
-# Or manually run schema.sql on your PostgreSQL
-```
-
-### 4. Run
-
-```bash
-# Terminal 1: Start API
-uvicorn app.main:app --reload
-
-# Terminal 2: Start Bot
-python -m bot.main
-```
-
-## 🤖 Bot Commands
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message and menu |
-| `/add` | List a new property |
-| `/search` | Natural language search |
-| `/my_properties` | View your listings |
-| `/help` | Get help |
-| `/cancel` | Cancel current operation |
-
-## 📱 Example Flows
-
-### Adding a Property
-
-```
-User: /add
-Bot: 🏠 Let's list your property! Are you putting it up for RENT or SALE?
-
-User: Rent
-Bot: 🔑 Great, a rental! What type of property is it?
-
-User: Apartment
-Bot: Got it! What's the monthly rent? (Use formats like 25k, 50L)
-
-User: 25000
-Bot: 📍 Which city and locality?
-
-User: Andheri West, Mumbai
-Bot: 🛏️ How many bedrooms?
-
-User: 2
-Bot: 📋 Here's your listing summary:
-     🔑 For Rent
-     🏷️ Type: Apartment
-     📍 Location: Andheri West, Mumbai
-     🛏️ Bedrooms: 2
-     💰 Rent: ₹25,000/month
-     
-     Would you like to save this listing?
-
-User: Yes
-Bot: ✅ Property saved successfully!
-```
-
-### Searching Properties
-
-```
-User: 2BHK flat for rent in Mumbai under 30k
-
-Bot: 🔍 Searching...
-
-Bot: 🏠 Found 15 properties:
-
-     1. 🔑 Rent | 2BHK Apartment
-        📍 Andheri West, Mumbai
-        💰 ₹25,000/mo
-     
-     2. 🔑 Rent | 2BHK Apartment
-        📍 Bandra East, Mumbai
-        💰 ₹28,000/mo
-     ...
-```
-
-## 🔒 Security
-
-### Query Whitelist
-Only these fields can be queried:
-- `listing_type`, `property_type`, `city`, `locality`
-- `price`, `bedrooms`, `bathrooms`, `carpet_area`
-- `furnishing`, `has_parking`, `has_gym`, etc.
-
-### Allowed Operators
-- Comparison: `=`, `!=`, `>`, `>=`, `<`, `<=`
-- Text: `like` (contains)
-- List: `in`
-
-### Query Limits
-- Max 10 filters per query
-- Max 100 results per request
-- All queries are parameterized
-
-## 📊 API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/properties/` | Create property |
-| `GET` | `/api/v1/properties/` | List with filters |
-| `GET` | `/api/v1/properties/my` | User's properties |
-| `GET` | `/api/v1/properties/{id}` | Get single |
-| `PUT` | `/api/v1/properties/{id}` | Update |
-| `DELETE` | `/api/v1/properties/{id}` | Delete |
-| `POST` | `/api/v1/query/search` | Natural language search |
-| `POST` | `/api/v1/query/parse` | Parse query (debug) |
-
-## 🛠️ Configuration
-
-Key environment variables in `.env`:
+Then fill in at least:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/property_bot
-TELEGRAM_BOT_TOKEN=your_token
-OPENAI_API_KEY=your_key
-OPENAI_MODEL_REGULAR=gpt-4o-mini
-OPENAI_MODEL_ADVANCED=gpt-4o
+DATABASE_URL=postgresql+asyncpg://propertybot:propertybot_secret@localhost:5432/property_bot
+DATABASE_SYNC_URL=postgresql://propertybot:propertybot_secret@localhost:5432/property_bot
+TELEGRAM_BOT_TOKEN=your_bot_token
+NVIDIA_API_KEY=your_nvidia_key
+NVIDIA_MODEL=deepseek-ai/deepseek-v3.2
+SECRET_KEY=replace-this-in-real-deployments
 ```
 
-## 📈 Scalability
+### 3. Start PostgreSQL
 
-- **Stateless backend** - horizontal scaling ready
-- **Async database** - connection pooling built-in
-- **Webhook mode** - efficient for high traffic
-- **PostgreSQL indexes** - optimized for common queries
+Option A: local PostgreSQL
 
-Tested for 30k+ users with proper infrastructure.
+Create a database and user that match `.env`:
+
+```sql
+CREATE ROLE propertybot LOGIN PASSWORD 'propertybot_secret';
+CREATE DATABASE property_bot OWNER propertybot;
+```
+
+Option B: Docker
+
+If Docker is available on your machine:
+
+```bash
+docker compose up -d postgres
+```
+
+### 4. Initialize schema
+
+The app can create tables from SQLAlchemy models on startup via the bot DB initializer.
+
+You can also initialize manually:
+
+```bash
+.venv\Scripts\python.exe -c "import asyncio; from bot import database as db; asyncio.run(db.init_db())"
+```
+
+### 5. Run the app
+
+Start the API:
+
+```bash
+.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Start the bot in another terminal:
+
+```bash
+.venv\Scripts\python.exe -m bot.main
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+## Environment Variables
+
+Main variables:
+
+```env
+DATABASE_URL=
+DATABASE_SYNC_URL=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_WEBHOOK_URL=
+NVIDIA_API_KEY=
+NVIDIA_MODEL=deepseek-ai/deepseek-v3.2
+LLM_MODEL_REGULAR=
+LLM_MODEL_ADVANCED=
+APP_ENV=development
+DEBUG=true
+API_HOST=0.0.0.0
+API_PORT=8000
+SECRET_KEY=
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8000
+MAX_QUERY_RESULTS=100
+MAX_FILTERS_PER_QUERY=10
+```
+
+Notes:
+- `LLM_MODEL_REGULAR` and `LLM_MODEL_ADVANCED` are optional overrides.
+- If those are blank, the app uses `NVIDIA_MODEL`.
+
+## Telegram Commands
+
+- `/start`
+- `/add`
+- `/upload`
+- `/search`
+- `/my_properties`
+- `/help`
+- `/cancel`
+
+## Testing
+
+Run the default test suite:
+
+```bash
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Expected result without live provider credentials:
+- regression tests pass
+- live LLM tests are skipped
+
+## Deployment Notes
+
+### Minimal production checklist
+
+- use a real `SECRET_KEY`
+- use a dedicated PostgreSQL instance
+- keep `.env` out of source control
+- rotate any tokens used during development
+- set `DEBUG=false`
+- run behind a reverse proxy if exposing the API publicly
+
+### Current production caveats
+
+This project still needs hardening before a serious production deployment:
+- API ownership checks currently rely on client-supplied `telegram_id`
+- migrations are not yet formalized through Alembic workflow
+- bot `user_data` persistence is still partly in-memory
+
+For a more complete deployment guide, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Publishing Safety
+
+Before pushing your own fork:
+
+- make sure `.env` is not committed
+- rotate any Telegram or NVIDIA keys that were ever stored locally in shared environments
+- verify `git status` does not include local DB or log artifacts

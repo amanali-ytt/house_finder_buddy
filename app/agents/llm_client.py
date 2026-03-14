@@ -12,6 +12,7 @@ import asyncio
 from typing import Optional, Dict, Any, Type, List
 from pydantic import BaseModel
 from openai import OpenAI
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 
 from app.config import get_settings
 
@@ -39,6 +40,8 @@ class NvidiaLLMClient:
         self.client = OpenAI(
             base_url=self.base_url,
             api_key=self.api_key,
+            timeout=30.0,
+            max_retries=0, # handled by tenacity
         )
 
     def _is_deepseek(self, model: Optional[str] = None) -> bool:
@@ -46,6 +49,12 @@ class NvidiaLLMClient:
         use_model = model or self.model
         return "deepseek" in use_model.lower()
 
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(Exception),
+        reraise=True
+    )
     def _call_api(
         self,
         messages: List[Dict[str, str]],

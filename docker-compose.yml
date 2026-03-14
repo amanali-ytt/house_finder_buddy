@@ -29,7 +29,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://propertybot:propertybot_secret@postgres:5432/property_bot
       DATABASE_SYNC_URL: postgresql://propertybot:propertybot_secret@postgres:5432/property_bot
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      NVIDIA_MODEL: ${NVIDIA_MODEL}
+      LLM_MODEL_REGULAR: ${LLM_MODEL_REGULAR:-}
+      LLM_MODEL_ADVANCED: ${LLM_MODEL_ADVANCED:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       APP_ENV: production
       DEBUG: "false"
@@ -48,10 +51,15 @@ services:
     container_name: property_bot_telegram
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      API_BASE_URL: http://api:8000/api/v1
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      DATABASE_URL: postgresql+asyncpg://propertybot:propertybot_secret@postgres:5432/property_bot
+      DATABASE_SYNC_URL: postgresql://propertybot:propertybot_secret@postgres:5432/property_bot
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+      NVIDIA_MODEL: ${NVIDIA_MODEL}
+      LLM_MODEL_REGULAR: ${LLM_MODEL_REGULAR:-}
+      LLM_MODEL_ADVANCED: ${LLM_MODEL_ADVANCED:-}
     depends_on:
-      - api
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

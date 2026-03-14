@@ -17,6 +17,11 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 
+def enum_values(enum_cls):
+    """Persist enum values exactly as declared in the DB schema."""
+    return [member.value for member in enum_cls]
+
+
 # =============================================================================
 # ENUMS
 # =============================================================================
@@ -80,8 +85,14 @@ class Property(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     
     # Listing Details
-    listing_type = Column(SQLEnum(ListingType), nullable=False)
-    property_type = Column(SQLEnum(PropertyType), nullable=False)
+    listing_type = Column(
+        SQLEnum(ListingType, name="listing_type", values_callable=enum_values),
+        nullable=False,
+    )
+    property_type = Column(
+        SQLEnum(PropertyType, name="property_type", values_callable=enum_values),
+        nullable=False,
+    )
     title = Column(String(500))
     description = Column(Text)
     
@@ -112,9 +123,16 @@ class Property(Base):
     age_of_property = Column(Integer)
     
     # Availability
-    furnishing = Column(SQLEnum(FurnishingStatus), default=FurnishingStatus.UNFURNISHED)
+    furnishing = Column(
+        SQLEnum(FurnishingStatus, name="furnishing_status", values_callable=enum_values),
+        default=FurnishingStatus.UNFURNISHED,
+    )
     available_from = Column(Date)
-    status = Column(SQLEnum(PropertyStatus), default=PropertyStatus.AVAILABLE, index=True)
+    status = Column(
+        SQLEnum(PropertyStatus, name="property_status", values_callable=enum_values),
+        default=PropertyStatus.AVAILABLE,
+        index=True,
+    )
     
     # Preferences
     preferred_tenant = Column(String(100))
@@ -123,7 +141,7 @@ class Property(Base):
     # Metadata
     source = Column(String(50), default="chat")
     raw_input_text = Column(Text)
-    metadata = Column(JSONB, default={})
+    property_metadata = Column("metadata", JSONB, default={})
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

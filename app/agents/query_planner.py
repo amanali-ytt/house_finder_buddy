@@ -45,11 +45,11 @@ class QueryPlannerAgent:
 
 Convert this search query into structured filters. Return a valid JSON object with intent, filters, sort_by, sort_order, and limit."""
 
-        # Use GPT-4O Mini for fast query planning
+        # Use the configured default model for fast query planning.
         response = await llm_client.complete(
             system_prompt=self.system_prompt,
             user_message=user_message,
-            model=settings.openai_model_regular,  # GPT-4O Mini
+            model=settings.regular_llm_model,
             temperature=0.2,  # Low for consistent parsing
             response_format={"type": "json_object"}
         )

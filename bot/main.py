@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    filters, PicklePersistence
+    filters
 )
 
 from bot.handlers import (
@@ -25,6 +25,7 @@ from bot.handlers import (
     get_add_property_handler, get_search_handler,
 )
 from bot import database as db
+from bot.persistence import PostgresPersistence
 
 # Load environment variables
 load_dotenv()
@@ -53,7 +54,8 @@ def main():
         sys.exit(1)
 
     # Initialize database
-    db.init_db()
+    import asyncio
+    asyncio.run(db.init_db())
     logger.info("✅ Database initialized")
 
     # Check NVIDIA API key
@@ -64,7 +66,7 @@ def main():
         logger.info(f"✅ NVIDIA API configured (model: {os.getenv('NVIDIA_MODEL', 'deepseek-ai/deepseek-v3.2')})")
 
     # Create persistence
-    persistence = PicklePersistence(filepath="bot_data.pickle")
+    persistence = PostgresPersistence()
 
     # Build application
     application = (
@@ -107,9 +109,8 @@ def main():
     print("=" * 60)
     print("🤖 PROPERTY BOT STARTING")
     print("=" * 60)
-    print(f"   Database: {db.DB_PATH}")
+    print("   Database: PostgreSQL Backend")
     print(f"   LLM Model: {os.getenv('NVIDIA_MODEL', 'deepseek-ai/deepseek-v3.2')}")
-    print(f"   Properties in DB: {db.get_property_count()}")
     print("=" * 60)
     print("   Send /start to your bot on Telegram to begin!")
     print("=" * 60)

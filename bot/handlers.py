@@ -64,17 +64,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"▶️ /start from {user.first_name} (ID: {telegram_id})")
 
     # Create user in DB if needed
-    db.get_or_create_user(
+    await db.get_or_create_user(
         telegram_id=telegram_id,
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name,
     )
 
-    if db.is_user_verified(telegram_id):
+    if await db.is_user_verified(telegram_id):
         # Returning verified user — show main menu
-        prop_count = len(db.get_user_properties(telegram_id))
-        total_props = db.get_property_count()
+        prop_count = len(await db.get_user_properties(telegram_id))
+        total_props = await db.get_property_count()
 
         await update.message.reply_text(
             f"👋 Welcome back, {user.first_name}!\n\n"
@@ -160,7 +160,7 @@ async def onboarding_receive_document(update: Update, context: ContextTypes.DEFA
         duplicate_count = 0
 
         for prop in properties:
-            dupes = db.find_duplicates(prop)
+            dupes = await db.find_duplicates(prop)
             if dupes:
                 duplicate_count += 1
             else:
@@ -237,13 +237,13 @@ async def onboarding_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for prop in properties:
             try:
                 prop["raw_input_text"] = ""
-                db.save_property(telegram_id, prop, source="pdf_onboarding")
+                await db.save_property(telegram_id, prop, source="pdf_onboarding")
                 saved += 1
             except Exception as e:
                 logger.error(f"Failed to save property: {e}")
 
         # Mark user as verified
-        db.mark_user_verified(telegram_id)
+        await db.mark_user_verified(telegram_id)
 
         clear_user_data(context)
 
@@ -277,7 +277,7 @@ async def upload_file_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the file upload flow."""
     telegram_id = update.effective_user.id
 
-    if not db.is_user_verified(telegram_id):
+    if not await db.is_user_verified(telegram_id):
         await update.message.reply_text(
             "⚠️ Please complete onboarding first. Type /start to begin.",
         )
@@ -333,7 +333,7 @@ async def receive_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE
         new_properties = []
         duplicate_count = 0
         for prop in properties:
-            dupes = db.find_duplicates(prop)
+            dupes = await db.find_duplicates(prop)
             if dupes:
                 duplicate_count += 1
             else:
@@ -392,7 +392,7 @@ async def confirm_file_properties(update: Update, context: ContextTypes.DEFAULT_
         saved = 0
         for prop in properties:
             try:
-                db.save_property(telegram_id, prop, source="pdf_upload")
+                await db.save_property(telegram_id, prop, source="pdf_upload")
                 saved += 1
             except Exception as e:
                 logger.error(f"Save error: {e}")
@@ -436,7 +436,7 @@ async def add_property_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Start the add property flow."""
     telegram_id = update.effective_user.id
 
-    if not db.is_user_verified(telegram_id):
+    if not await db.is_user_verified(telegram_id):
         await update.message.reply_text(
             "⚠️ Please complete onboarding first. Type /start to begin.",
         )
@@ -644,7 +644,7 @@ async def confirm_property(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prop_data = user_data["property_data"]
 
             # Check for duplicates
-            dupes = db.find_duplicates(prop_data)
+            dupes = await db.find_duplicates(prop_data)
             if dupes:
                 await update.message.reply_text(
                     "⚠️ A similar property already exists in the database!\n\n"
@@ -655,7 +655,7 @@ async def confirm_property(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Continue to save on next yes
                 return ConversationState.CONFIRMING_PROPERTY.value
 
-            prop_id = db.save_property(telegram_id, prop_data, source="chat")
+            prop_id = await db.save_property(telegram_id, prop_data, source="chat")
 
             await update.message.reply_text(
                 f"✅ Property saved! (ID: {prop_id})\n\n"
@@ -706,8 +706,8 @@ async def process_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Plan query via LLM
         query_plan = await llm_helpers.plan_search_query(query)
 
-        # Execute against SQLite
-        results = db.search_properties(query_plan)
+        # Execute against SQLite (now PostgreSQL)
+        results = await db.search_properties(query_plan)
 
         if not results:
             # Show what was searched for
@@ -754,7 +754,7 @@ async def my_properties_command(update: Update, context: ContextTypes.DEFAULT_TY
     """Handle /my_properties command."""
     telegram_id = update.effective_user.id
 
-    properties = db.get_user_properties(telegram_id)
+    properties = await db.get_user_properties(telegram_id)
 
     if not properties:
         await update.message.reply_text(
@@ -828,7 +828,7 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"📝 MENU HANDLER: '{text}' from {update.effective_user.first_name} (ID: {telegram_id})")
 
     # Check if user is verified
-    if not db.is_user_verified(telegram_id):
+    if not await db.is_user_verified(telegram_id):
         await update.message.reply_text(
             "👋 Hi! You need to complete onboarding first.\n\n"
             "Send /start to begin!",
@@ -851,7 +851,7 @@ async def handle_menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await update.message.reply_text("🔍 Searching...")
             query_plan = await llm_helpers.plan_search_query(text)
-            results = db.search_properties(query_plan.get("filters", []))
+            results = await db.search_properties(query_plan)
 
             if results:
                 parts = [f"🔍 *Found {len(results)} result(s):*\n"]

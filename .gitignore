@@ -13,6 +13,7 @@ pip-delete-this-directory.txt
 # Environment
 .env
 .env.local
+.env.backup
 
 # IDE
 .vscode/
@@ -20,6 +21,7 @@ pip-delete-this-directory.txt
 *.swp
 *.swo
 .gemini/
+.agent/
 
 # Bot Data
 bot_data.pickle
@@ -32,6 +34,8 @@ logs/
 # Database
 *.db
 *.sqlite
+.postgres-data/
+.postgres.log
 
 # Uploaded documents
 documents/

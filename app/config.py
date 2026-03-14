@@ -3,7 +3,7 @@ Configuration module for the Property Bot application.
 Loads settings from environment variables with validation.
 """
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import Optional
 
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model_regular: str = "gpt-4o-mini"
     openai_model_advanced: str = "gpt-4o"
+
+    # Provider-agnostic LLM model overrides
+    llm_model_regular: Optional[str] = None
+    llm_model_advanced: Optional[str] = None
     
     # Free LLM Providers
     # Groq: Free tier at console.groq.com
@@ -51,13 +55,24 @@ class Settings(BaseSettings):
     max_query_results: int = 100
     max_filters_per_query: int = 10
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+    )
     
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",")]
+
+    @property
+    def regular_llm_model(self) -> str:
+        """Resolve the default model used for routine LLM tasks."""
+        return self.llm_model_regular or self.nvidia_model or self.openai_model_regular
+
+    @property
+    def advanced_llm_model(self) -> str:
+        """Resolve the default model used for extraction-heavy LLM tasks."""
+        return self.llm_model_advanced or self.nvidia_model or self.openai_model_advanced
 
 
 @lru_cache()
