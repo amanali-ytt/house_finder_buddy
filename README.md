@@ -37,6 +37,53 @@ You only need:
 - `NVIDIA_API_KEY`
 - PostgreSQL running locally or remotely
 
+## For GitHub Users
+
+If you cloned this repo and want to run it for yourself:
+
+1. Create your own Telegram bot with BotFather.
+2. Get your own NVIDIA API key from [build.nvidia.com](https://build.nvidia.com/).
+3. Create your own local or hosted PostgreSQL database.
+4. Copy `.env.example` to `.env` and fill in your own values.
+5. Start the API and bot locally.
+
+Important:
+- this repo does not contain any real Telegram or NVIDIA keys
+- every user must provide their own `.env`
+- you can keep the default NVIDIA model unless you want to experiment
+
+## What It Looks Like In Use
+
+Example add-property flow:
+
+```text
+/add
+Rent
+Apartment
+25000
+Guindy, Chennai
+2
+skip
+skip
+```
+
+Example search queries:
+
+```text
+2BHK apartment for rent in Chennai under 30k
+PG near metro in Chennai
+villa for sale in Bangalore with parking
+```
+
+Example onboarding flow:
+
+```text
+/start
+upload a PDF or Excel file with property details
+review extracted properties
+save the verified listings
+```
+
 ## Quick Start
 
 ### 1. Prerequisites
@@ -65,6 +112,12 @@ Create your env file:
 
 ```bash
 copy .env.example .env
+```
+
+Linux/macOS:
+
+```bash
+cp .env.example .env
 ```
 
 Then fill in at least:
@@ -126,6 +179,23 @@ Health check:
 ```bash
 curl http://127.0.0.1:8000/health
 ```
+
+## Common First-Run Problems
+
+### PostgreSQL connection refused
+
+Make sure PostgreSQL is running and the credentials in `.env` match the actual database user and password.
+
+### Bot starts but LLM features fail
+
+Check:
+- `NVIDIA_API_KEY` is set
+- `NVIDIA_MODEL` is valid
+- your network can reach NVIDIA hosted inference
+
+### Tests skip live LLM checks
+
+That is expected if you do not set provider credentials. The regression tests should still pass.
 
 ## Environment Variables
 
